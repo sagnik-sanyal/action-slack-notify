@@ -3,15 +3,53 @@ on:
     tags:
       - "v*"
 name: Release Creation
+permissions:
+  contents: write
 jobs:
+  build-binaries:
+    name: Build Go Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Build binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -a -installsuffix cgo -ldflags '-w -extldflags "-static"' \
+            -o slack-notify-${{ matrix.goos }}-${{ matrix.goarch }} main.go
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: slack-notify-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: slack-notify-${{ matrix.goos }}-${{ matrix.goarch }}
+
   release:
     name: Create a Draft Release on GitHub
+    needs: build-binaries
     runs-on: ubuntu-latest
     steps:
     - name: Get Release Name
       id: get_release_name
       run: |
         echo "release_name=${GITHUB_REF_NAME/v/Version }" >> $GITHUB_ENV
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
     - name: Publish a Draft Release
       uses: softprops/action-gh-release@v2
       with:
@@ -19,8 +57,9 @@ jobs:
           ## What's Changed
 
           **Changelog:**
-        draft: true  # Creates a Draft Release
+        draft: true
         name: ${{ steps.get_release_name.outputs.release_name }}
         generate_release_notes: true
         append_body: true
-
+        files: |
+          artifacts/slack-notify-*/slack-notify-*

@@ -1,9 +1,30 @@
 name: 'Slack Notify'
 description: 'This action will send a notification to Slack'
 author: 'rtCamp'
+inputs:
+  SLACK_NOTIFY_MODE:
+    description: 'Execution mode: "docker" (default), "native" (no Docker required), or "auto" (auto-detect Docker availability)'
+    required: false
+    default: 'docker'
 runs:
     using: 'composite'
     steps:
+      - name: "Detect execution mode"
+        id: detect_mode
+        shell: bash
+        run: |
+          MODE="${{ inputs.SLACK_NOTIFY_MODE }}"
+          if [[ "$MODE" == "auto" ]]; then
+            if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+              echo "::notice::Docker detected. Using Docker execution mode."
+              MODE="docker"
+            else
+              echo "::notice::Docker not available. Using native execution mode."
+              MODE="native"
+            fi
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+
       - name: "Slack-Markdown Message Conversion"
         if: env.SLACKIFY_MARKDOWN == 'true' && env.SLACK_MESSAGE != ''
         id: slackify_message
@@ -32,8 +53,9 @@ runs:
         with:
           text: '${{ env.SLACK_MESSAGE_ON_CANCEL }}'
 
-      - name: "Slack Notification (Formatted)"
-        if: env.SLACKIFY_MARKDOWN == 'true'
+      # --- Docker execution path (existing behavior) ---
+      - name: "Slack Notification (Formatted, Docker)"
+        if: steps.detect_mode.outputs.mode == 'docker' && env.SLACKIFY_MARKDOWN == 'true'
         env:
           SLACK_MESSAGE: "${{ steps.slackify_message.outputs.text || env.SLACK_MESSAGE }}"
           SLACK_MESSAGE_ON_SUCCESS: "${{ steps.slackify_success_message.outputs.text || env.SLACK_MESSAGE_ON_SUCCESS }}"
@@ -43,11 +65,67 @@ runs:
           ENABLE_ESCAPES: "true"
         uses: "docker://ghcr.io/rtcamp/action-slack-notify@sha256:acc1c430721b27030d3dacf4273eec569388ad650e127bb9f1292f33cd9cd9bd" # v2.3.3
 
-      - name: "Slack Notification (Unformatted)"
-        if: env.SLACKIFY_MARKDOWN != 'true'
+      - name: "Slack Notification (Unformatted, Docker)"
+        if: steps.detect_mode.outputs.mode == 'docker' && env.SLACKIFY_MARKDOWN != 'true'
         uses: "docker://ghcr.io/rtcamp/action-slack-notify@sha256:acc1c430721b27030d3dacf4273eec569388ad650e127bb9f1292f33cd9cd9bd" # v2.3.3
         env:
           GITHUB_RUN: "${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}"
+
+      # --- Native execution path (no Docker required) ---
+      - name: "Download slack-notify binary"
+        if: steps.detect_mode.outputs.mode == 'native'
+        shell: bash
+        run: |
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64) ARCH="amd64" ;;
+            aarch64) ARCH="arm64" ;;
+            *) echo "::error::Unsupported architecture: $ARCH"; exit 1 ;;
+          esac
+
+          ACTION_VERSION="${{ github.action_ref }}"
+          REPO="${{ github.action_repository }}"
+
+          # If major-version tag (e.g. "v2"), resolve to latest matching release
+          if [[ "$ACTION_VERSION" =~ ^v[0-9]+$ ]]; then
+            RESOLVED=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" | \
+              jq -r --arg prefix "$ACTION_VERSION." '[.[] | select(.tag_name | startswith($prefix)) | select(.draft == false)] | sort_by(.created_at) | last | .tag_name')
+            if [[ -n "$RESOLVED" && "$RESOLVED" != "null" ]]; then
+              ACTION_VERSION="$RESOLVED"
+            else
+              echo "::error::Could not resolve release for ${ACTION_VERSION}. Ensure binaries are attached to a release."
+              exit 1
+            fi
+          fi
+
+          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${ACTION_VERSION}/slack-notify-linux-${ARCH}"
+          echo "Downloading slack-notify from ${DOWNLOAD_URL}"
+          curl -fsSL -o "${{ github.action_path }}/slack-notify" "${DOWNLOAD_URL}"
+          chmod +x "${{ github.action_path }}/slack-notify"
+
+      - name: "Slack Notification (Formatted, Native)"
+        if: steps.detect_mode.outputs.mode == 'native' && env.SLACKIFY_MARKDOWN == 'true'
+        shell: bash
+        env:
+          SLACK_MESSAGE: "${{ steps.slackify_message.outputs.text || env.SLACK_MESSAGE }}"
+          SLACK_MESSAGE_ON_SUCCESS: "${{ steps.slackify_success_message.outputs.text || env.SLACK_MESSAGE_ON_SUCCESS }}"
+          SLACK_MESSAGE_ON_FAILURE: "${{ steps.slackify_failure_message.outputs.text || env.SLACK_MESSAGE_ON_FAILURE }}"
+          SLACK_MESSAGE_ON_CANCEL: "${{ steps.slackify_cancel_message.outputs.text || env.SLACK_MESSAGE_ON_CANCEL }}"
+          GITHUB_RUN: "${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}"
+          ENABLE_ESCAPES: "true"
+          ACTION_DIR: "${{ github.action_path }}"
+        run: |
+          bash "${{ github.action_path }}/entrypoint.sh"
+
+      - name: "Slack Notification (Unformatted, Native)"
+        if: steps.detect_mode.outputs.mode == 'native' && env.SLACKIFY_MARKDOWN != 'true'
+        shell: bash
+        env:
+          GITHUB_RUN: "${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}"
+          ACTION_DIR: "${{ github.action_path }}"
+        run: |
+          bash "${{ github.action_path }}/entrypoint.sh"
+
 branding:
   icon: 'bell'
   color: 'yellow'
