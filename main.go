@@ -100,7 +100,10 @@ func main() {
 		}
 
 		long_sha := getEnv("GITHUB_SHA")
-		commit_sha := long_sha[0:6]
+		commit_sha := long_sha
+		if len(long_sha) >= 6 {
+			commit_sha = long_sha[0:6]
+		}
 
 		color := ""
 		switch strings.ToLower(getEnv(EnvSlackColor)) {
@@ -298,7 +301,8 @@ func send_raw(endpoint string, payload []byte) error {
 	case "WEBHOOK":
 		res, err = http.Post(endpoint, "application/json", b)
 	case "TOKEN":
-		req, err := http.NewRequest("POST", endpoint, b)
+		var req *http.Request
+		req, err = http.NewRequest("POST", endpoint, b)
 		if err != nil {
 			return fmt.Errorf("Error creating request: %s\n", err)
 		}
@@ -345,6 +349,9 @@ func sendFile(filename string, message string, channel string, thread_ts string)
 	}
 
 	_, err = io.Copy(part, file)
+	if err != nil {
+		return err
+	}
 
 	err = writer.WriteField("initial_comment", message)
 	if err != nil {

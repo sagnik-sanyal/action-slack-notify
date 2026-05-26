@@ -12,8 +12,17 @@ runs:
       - name: "Detect execution mode"
         id: detect_mode
         shell: bash
+        env:
+          SLACK_NOTIFY_MODE_INPUT: "${{ inputs.SLACK_NOTIFY_MODE }}"
         run: |
-          MODE="${{ inputs.SLACK_NOTIFY_MODE }}"
+          MODE=$(echo "$SLACK_NOTIFY_MODE_INPUT" | tr '[:upper:]' '[:lower:]')
+          case "$MODE" in
+            docker|native|auto) ;;
+            *)
+              echo "::error::Invalid SLACK_NOTIFY_MODE: '$SLACK_NOTIFY_MODE_INPUT'. Must be 'docker', 'native', or 'auto'."
+              exit 1
+              ;;
+          esac
           if [[ "$MODE" == "auto" ]]; then
             if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
               echo "::notice::Docker detected. Using Docker execution mode."
@@ -75,6 +84,11 @@ runs:
       - name: "Download slack-notify binary"
         if: steps.detect_mode.outputs.mode == 'native'
         shell: bash
+        env:
+          ACTION_REF: "${{ github.action_ref }}"
+          ACTION_REPO: "${{ github.action_repository }}"
+          ACTION_PATH: "${{ github.action_path }}"
+          GH_TOKEN: "${{ github.token }}"
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in
@@ -83,25 +97,31 @@ runs:
             *) echo "::error::Unsupported architecture: $ARCH"; exit 1 ;;
           esac
 
-          ACTION_VERSION="${{ github.action_ref }}"
-          REPO="${{ github.action_repository }}"
+          ACTION_VERSION="$ACTION_REF"
+
+          # Validate that the ref looks like a version tag
+          if [[ ! "$ACTION_VERSION" =~ ^v[0-9] ]]; then
+            echo "::error::Native mode requires a version tag ref (e.g. @v2 or @v2.4.0), got '$ACTION_VERSION'. Branch or SHA refs are not supported for native mode."
+            exit 1
+          fi
 
           # If major-version tag (e.g. "v2"), resolve to latest matching release
           if [[ "$ACTION_VERSION" =~ ^v[0-9]+$ ]]; then
-            RESOLVED=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" | \
+            RESOLVED=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${ACTION_REPO}/releases?per_page=100" | \
               jq -r --arg prefix "$ACTION_VERSION." '[.[] | select(.tag_name | startswith($prefix)) | select(.draft == false)] | sort_by(.created_at) | last | .tag_name')
             if [[ -n "$RESOLVED" && "$RESOLVED" != "null" ]]; then
               ACTION_VERSION="$RESOLVED"
             else
-              echo "::error::Could not resolve release for ${ACTION_VERSION}. Ensure binaries are attached to a release."
+              echo "::error::Could not resolve release for ${ACTION_REF}. Ensure binaries are attached to a published release."
               exit 1
             fi
           fi
 
-          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${ACTION_VERSION}/slack-notify-linux-${ARCH}"
+          DOWNLOAD_URL="https://github.com/${ACTION_REPO}/releases/download/${ACTION_VERSION}/slack-notify-linux-${ARCH}"
           echo "Downloading slack-notify from ${DOWNLOAD_URL}"
-          curl -fsSL -o "${{ github.action_path }}/slack-notify" "${DOWNLOAD_URL}"
-          chmod +x "${{ github.action_path }}/slack-notify"
+          curl -fsSL -o "${ACTION_PATH}/slack-notify" "${DOWNLOAD_URL}"
+          chmod +x "${ACTION_PATH}/slack-notify"
 
       - name: "Slack Notification (Formatted, Native)"
         if: steps.detect_mode.outputs.mode == 'native' && env.SLACKIFY_MARKDOWN == 'true'
@@ -115,7 +135,7 @@ runs:
           ENABLE_ESCAPES: "true"
           ACTION_DIR: "${{ github.action_path }}"
         run: |
-          bash "${{ github.action_path }}/entrypoint.sh"
+          bash "${ACTION_DIR}/entrypoint.sh"
 
       - name: "Slack Notification (Unformatted, Native)"
         if: steps.detect_mode.outputs.mode == 'native' && env.SLACKIFY_MARKDOWN != 'true'
@@ -124,7 +144,7 @@ runs:
           GITHUB_RUN: "${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}"
           ACTION_DIR: "${{ github.action_path }}"
         run: |
-          bash "${{ github.action_path }}/entrypoint.sh"
+          bash "${ACTION_DIR}/entrypoint.sh"
 
 branding:
   icon: 'bell'
