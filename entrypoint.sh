@@ -59,9 +59,9 @@ if [[ -d "$custom_path" ]]; then
     if command -v rsync &>/dev/null; then
         rsync -av "$custom_path/" "$target_dir/"
     else
-        cp -f "$custom_path"/*.sh "$target_dir/" 2>/dev/null || true
+        cp -rf "$custom_path"/. "$target_dir/"
     fi
-    chmod +x "$target_dir"/*.sh
+    chmod +x "$target_dir"/*.sh 2>/dev/null || true
 fi
 
 bash "$main_script"

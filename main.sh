@@ -48,16 +48,20 @@ if [[ -z "$SLACK_WEBHOOK" ]]; then
   printf "[\e[0;31mERROR\e[0m] Secret \`SLACK_WEBHOOK\` is missing. Falling back to using \`SLACK_TOKEN\` and \`SLACK_CHANNEL\`.\n"
 fi
 
-if [[ -f "$hosts_file" ]] && command -v shyaml &>/dev/null; then
-	hostname=$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.hostname")
-	user=$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.user")
-	export HOST_NAME="\`$user@$hostname\`"
-	DEPLOY_PATH="$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.deploy_path")"
-	export DEPLOY_PATH
+if [[ -f "$hosts_file" ]]; then
+	if command -v shyaml &>/dev/null; then
+		hostname=$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.hostname")
+		user=$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.user")
+		export HOST_NAME="\`$user@$hostname\`"
+		DEPLOY_PATH="$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.deploy_path")"
+		export DEPLOY_PATH
 
-	temp_url="${DEPLOY_PATH%%/app*}"
-	export SITE_NAME="${temp_url##*sites/}"
-    export HOST_TITLE="SSH Host"
+		temp_url="${DEPLOY_PATH%%/app*}"
+		export SITE_NAME="${temp_url##*sites/}"
+		export HOST_TITLE="SSH Host"
+	else
+		echo "::warning::shyaml not available. Skipping hosts.yml host/site lookup. Install shyaml or use Docker mode."
+	fi
 fi
 
 PR_SHA="$(cat "$GITHUB_EVENT_PATH" | jq -r .pull_request.head.sha)"

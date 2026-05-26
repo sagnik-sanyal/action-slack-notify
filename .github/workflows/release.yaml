@@ -3,12 +3,12 @@ on:
     tags:
       - "v*"
 name: Release Creation
-permissions:
-  contents: write
 jobs:
   build-binaries:
     name: Build Go Binaries
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
@@ -41,11 +41,13 @@ jobs:
     name: Create a Draft Release on GitHub
     needs: build-binaries
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
     - name: Get Release Name
       id: get_release_name
       run: |
-        echo "release_name=${GITHUB_REF_NAME/v/Version }" >> $GITHUB_ENV
+        echo "release_name=${GITHUB_REF_NAME/v/Version }" >> "$GITHUB_OUTPUT"
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
