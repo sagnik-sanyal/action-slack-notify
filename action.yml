@@ -63,6 +63,11 @@ runs:
           text: '${{ env.SLACK_MESSAGE_ON_CANCEL }}'
 
       # --- Docker execution path (existing behavior) ---
+      # NOTE: We use `run: docker run` instead of `uses: docker://` because
+      # GitHub Actions pre-pulls Docker images for `uses: docker://` steps
+      # during job setup, BEFORE step-level `if:` conditions are evaluated.
+      # This causes failures on Docker-less runners like ubuntu-slim even
+      # when the step would be skipped. Using `run:` respects the `if:`.
       - name: "Slack Notification (Formatted, Docker)"
         if: steps.detect_mode.outputs.mode == 'docker' && env.SLACKIFY_MARKDOWN == 'true'
         shell: bash
@@ -128,11 +133,27 @@ runs:
           ACTION_PATH: "${{ github.action_path }}"
           GH_TOKEN: "${{ github.token }}"
         run: |
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
           ARCH=$(uname -m)
-          case "$ARCH" in
-            x86_64) ARCH="amd64" ;;
-            aarch64) ARCH="arm64" ;;
-            *) echo "::error::Unsupported architecture: $ARCH"; exit 1 ;;
+
+          case "$OS" in
+            linux)
+              case "$ARCH" in
+                x86_64) ARCH="amd64" ;;
+                aarch64) ARCH="arm64" ;;
+                *) echo "::error::Unsupported architecture on Linux: $ARCH"; exit 1 ;;
+              esac
+              ;;
+            darwin)
+              case "$ARCH" in
+                arm64) ;;
+                *) echo "::error::Unsupported architecture on macOS: $ARCH. Only arm64 is supported."; exit 1 ;;
+              esac
+              ;;
+            *)
+              echo "::error::Unsupported operating system: $OS"
+              exit 1
+              ;;
           esac
 
           ACTION_VERSION="$ACTION_REF"
@@ -156,7 +177,7 @@ runs:
             fi
           fi
 
-          DOWNLOAD_URL="https://github.com/${ACTION_REPO}/releases/download/${ACTION_VERSION}/slack-notify-linux-${ARCH}"
+          DOWNLOAD_URL="https://github.com/${ACTION_REPO}/releases/download/${ACTION_VERSION}/slack-notify-${OS}-${ARCH}"
           echo "Downloading slack-notify from ${DOWNLOAD_URL}"
           curl -fsSL -o "${ACTION_PATH}/slack-notify" "${DOWNLOAD_URL}"
           chmod +x "${ACTION_PATH}/slack-notify"
