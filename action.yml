@@ -63,11 +63,6 @@ runs:
           text: '${{ env.SLACK_MESSAGE_ON_CANCEL }}'
 
       # --- Docker execution path (existing behavior) ---
-      # NOTE: We use `run: docker run` instead of `uses: docker://` because
-      # GitHub Actions pre-pulls Docker images for `uses: docker://` steps
-      # during job setup, BEFORE step-level `if:` conditions are evaluated.
-      # This causes failures on Docker-less runners like ubuntu-slim even
-      # when the step would be skipped. Using `run:` respects the `if:`.
       - name: "Slack Notification (Formatted, Docker)"
         if: steps.detect_mode.outputs.mode == 'docker' && env.SLACKIFY_MARKDOWN == 'true'
         shell: bash
