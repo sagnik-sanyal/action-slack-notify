@@ -63,8 +63,14 @@ runs:
           text: '${{ env.SLACK_MESSAGE_ON_CANCEL }}'
 
       # --- Docker execution path (existing behavior) ---
+      # NOTE: We use `run: docker run` instead of `uses: docker://` because
+      # GitHub Actions pre-pulls Docker images for `uses: docker://` steps
+      # during job setup, BEFORE step-level `if:` conditions are evaluated.
+      # This causes failures on Docker-less runners like ubuntu-slim even
+      # when the step would be skipped. Using `run:` respects the `if:`.
       - name: "Slack Notification (Formatted, Docker)"
         if: steps.detect_mode.outputs.mode == 'docker' && env.SLACKIFY_MARKDOWN == 'true'
+        shell: bash
         env:
           SLACK_MESSAGE: "${{ steps.slackify_message.outputs.text || env.SLACK_MESSAGE }}"
           SLACK_MESSAGE_ON_SUCCESS: "${{ steps.slackify_success_message.outputs.text || env.SLACK_MESSAGE_ON_SUCCESS }}"
@@ -72,13 +78,50 @@ runs:
           SLACK_MESSAGE_ON_CANCEL: "${{ steps.slackify_cancel_message.outputs.text || env.SLACK_MESSAGE_ON_CANCEL }}"
           GITHUB_RUN: "${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}"
           ENABLE_ESCAPES: "true"
-        uses: "docker://ghcr.io/rtcamp/action-slack-notify@sha256:acc1c430721b27030d3dacf4273eec569388ad650e127bb9f1292f33cd9cd9bd" # v2.3.3
+        run: |
+          docker run --rm \
+            --workdir /github/workspace \
+            -v "$GITHUB_WORKSPACE":"/github/workspace" \
+            -v "$GITHUB_EVENT_PATH":"$GITHUB_EVENT_PATH" \
+            -e GITHUB_RUN -e ENABLE_ESCAPES \
+            -e SLACK_WEBHOOK -e SLACK_TOKEN -e SLACK_CHANNEL \
+            -e SLACK_MESSAGE -e SLACK_MESSAGE_ON_SUCCESS \
+            -e SLACK_MESSAGE_ON_FAILURE -e SLACK_MESSAGE_ON_CANCEL \
+            -e SLACK_USERNAME -e SLACK_ICON -e SLACK_ICON_EMOJI \
+            -e SLACK_COLOR -e SLACK_TITLE -e SLACK_FOOTER \
+            -e SLACK_LINK_NAMES -e SLACK_THREAD_TS -e SLACK_FILE_UPLOAD \
+            -e SLACK_CUSTOM_PAYLOAD -e SLACK_MSG_AUTHOR -e MSG_MINIMAL \
+            -e SLACKIFY_MARKDOWN -e GITHUB_SHA -e GITHUB_REF \
+            -e GITHUB_ACTOR -e GITHUB_WORKFLOW -e GITHUB_EVENT_NAME \
+            -e GITHUB_EVENT_PATH -e GITHUB_WORKSPACE -e GITHUB_REPOSITORY \
+            -e GITHUB_SERVER_URL -e GITHUB_RUN_NUMBER -e GITHUB_ACTION \
+            -e VAULT_ADDR -e VAULT_TOKEN -e VAULT_GITHUB_TOKEN \
+            "ghcr.io/rtcamp/action-slack-notify@sha256:acc1c430721b27030d3dacf4273eec569388ad650e127bb9f1292f33cd9cd9bd"
 
       - name: "Slack Notification (Unformatted, Docker)"
         if: steps.detect_mode.outputs.mode == 'docker' && env.SLACKIFY_MARKDOWN != 'true'
-        uses: "docker://ghcr.io/rtcamp/action-slack-notify@sha256:acc1c430721b27030d3dacf4273eec569388ad650e127bb9f1292f33cd9cd9bd" # v2.3.3
+        shell: bash
         env:
           GITHUB_RUN: "${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}"
+        run: |
+          docker run --rm \
+            --workdir /github/workspace \
+            -v "$GITHUB_WORKSPACE":"/github/workspace" \
+            -v "$GITHUB_EVENT_PATH":"$GITHUB_EVENT_PATH" \
+            -e GITHUB_RUN \
+            -e SLACK_WEBHOOK -e SLACK_TOKEN -e SLACK_CHANNEL \
+            -e SLACK_MESSAGE -e SLACK_MESSAGE_ON_SUCCESS \
+            -e SLACK_MESSAGE_ON_FAILURE -e SLACK_MESSAGE_ON_CANCEL \
+            -e SLACK_USERNAME -e SLACK_ICON -e SLACK_ICON_EMOJI \
+            -e SLACK_COLOR -e SLACK_TITLE -e SLACK_FOOTER \
+            -e SLACK_LINK_NAMES -e SLACK_THREAD_TS -e SLACK_FILE_UPLOAD \
+            -e SLACK_CUSTOM_PAYLOAD -e SLACK_MSG_AUTHOR -e MSG_MINIMAL \
+            -e SLACKIFY_MARKDOWN -e ENABLE_ESCAPES -e GITHUB_SHA -e GITHUB_REF \
+            -e GITHUB_ACTOR -e GITHUB_WORKFLOW -e GITHUB_EVENT_NAME \
+            -e GITHUB_EVENT_PATH -e GITHUB_WORKSPACE -e GITHUB_REPOSITORY \
+            -e GITHUB_SERVER_URL -e GITHUB_RUN_NUMBER -e GITHUB_ACTION \
+            -e VAULT_ADDR -e VAULT_TOKEN -e VAULT_GITHUB_TOKEN \
+            "ghcr.io/rtcamp/action-slack-notify@sha256:acc1c430721b27030d3dacf4273eec569388ad650e127bb9f1292f33cd9cd9bd"
 
       # --- Native execution path (no Docker required) ---
       - name: "Download slack-notify binary"
