@@ -86,6 +86,42 @@ Below screenshot help you visualize message part controlled by different variabl
 
 The `Site` and `SSH Host` details are only available if this action is run after [Deploy WordPress GitHub action](https://github.com/rtCamp/action-deploy-wordpress).
 
+## Native Execution Mode (No Docker Required)
+
+By default, this action runs inside a Docker container. If you need to run on runners without Docker support (such as `ubuntu-slim`, GitHub Enterprise Server with restricted Docker, or self-hosted runners without Docker), you can use the native execution mode.
+
+### Usage on `ubuntu-slim`
+
+```yml
+on: push
+name: Slack Notification Demo
+jobs:
+  slackNotification:
+    name: Slack Notification
+    runs-on: ubuntu-slim
+    steps:
+    - uses: actions/checkout@v4
+    - name: Slack Notification
+      uses: rtCamp/action-slack-notify@v2
+      with:
+        SLACK_NOTIFY_MODE: native
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+```
+
+### Execution Modes
+
+| Mode | Description |
+|------|-------------|
+| `docker` (default) | Runs inside a Docker container. Full feature support including Vault integration and `hosts.yml` parsing. |
+| `native` | Downloads a pre-built binary and runs directly on the runner. No Docker required. |
+| `auto` | Auto-detects Docker availability on the runner. Uses Docker if available, falls back to native mode otherwise. |
+
+### Native Mode Limitations
+
+- **Vault integration** is not available in native mode (deprecated feature).
+- **`hosts.yml` parsing** requires `shyaml` to be installed on the runner. If absent, a warning is emitted and the feature is skipped. Set `SLACK_CHANNEL` directly as an alternative.
+
 ## Hashicorp Vault (Optional) (Deprecated)
 
 This GitHub action supports [Hashicorp Vault](https://www.vaultproject.io/).

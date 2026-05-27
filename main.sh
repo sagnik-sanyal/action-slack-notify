@@ -14,7 +14,11 @@ hosts_file="$GITHUB_WORKSPACE/.github/hosts.yml"
 
 if [[ -z "$SLACK_CHANNEL" ]]; then
 	if [[ -f "$hosts_file" ]]; then
-		user_slack_channel=$(cat "$hosts_file" | shyaml get-value "$CI_SCRIPT_OPTIONS.slack-channel" | tr '[:upper:]' '[:lower:]')
+		if command -v shyaml &>/dev/null; then
+			user_slack_channel=$(cat "$hosts_file" | shyaml get-value "$CI_SCRIPT_OPTIONS.slack-channel" | tr '[:upper:]' '[:lower:]')
+		else
+			echo "::warning::shyaml not available. Skipping hosts.yml channel lookup. Install shyaml or set SLACK_CHANNEL directly."
+		fi
 	fi
 fi
 
@@ -24,16 +28,19 @@ fi
 
 # Check vault only if SLACK_WEBHOOK is empty.
 if [[ -z "$SLACK_WEBHOOK" ]]; then
+	if command -v vault &>/dev/null; then
+		# Login to vault using GH Token
+		if [[ -n "$VAULT_GITHUB_TOKEN" ]]; then
+			unset VAULT_TOKEN
+			vault login -method=github token="$VAULT_GITHUB_TOKEN" > /dev/null
+		fi
 
-	# Login to vault using GH Token
-	if [[ -n "$VAULT_GITHUB_TOKEN" ]]; then
-		unset VAULT_TOKEN
-		vault login -method=github token="$VAULT_GITHUB_TOKEN" > /dev/null
-	fi
-
-	if [[ -n "$VAULT_GITHUB_TOKEN" ]] || [[ -n "$VAULT_TOKEN" ]]; then
-		SLACK_WEBHOOK="$(vault read -field=webhook secret/slack)"
-		export SLACK_WEBHOOK
+		if [[ -n "$VAULT_GITHUB_TOKEN" ]] || [[ -n "$VAULT_TOKEN" ]]; then
+			SLACK_WEBHOOK="$(vault read -field=webhook secret/slack)"
+			export SLACK_WEBHOOK
+		fi
+	elif [[ -n "$VAULT_GITHUB_TOKEN" ]] || [[ -n "$VAULT_TOKEN" ]]; then
+		echo "::warning::Vault CLI not available. Vault support is deprecated. Please provide SLACK_WEBHOOK directly."
 	fi
 fi
 
@@ -42,15 +49,19 @@ if [[ -z "$SLACK_WEBHOOK" ]]; then
 fi
 
 if [[ -f "$hosts_file" ]]; then
-	hostname=$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.hostname")
-	user=$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.user")
-	export HOST_NAME="\`$user@$hostname\`"
-	DEPLOY_PATH="$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.deploy_path")"
-	export DEPLOY_PATH
+	if command -v shyaml &>/dev/null; then
+		hostname=$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.hostname")
+		user=$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.user")
+		export HOST_NAME="\`$user@$hostname\`"
+		DEPLOY_PATH="$(cat "$hosts_file" | shyaml get-value "$GITHUB_BRANCH.deploy_path")"
+		export DEPLOY_PATH
 
-	temp_url="${DEPLOY_PATH%%/app*}"
-	export SITE_NAME="${temp_url##*sites/}"
-    export HOST_TITLE="SSH Host"
+		temp_url="${DEPLOY_PATH%%/app*}"
+		export SITE_NAME="${temp_url##*sites/}"
+		export HOST_TITLE="SSH Host"
+	else
+		echo "::warning::shyaml not available. Skipping hosts.yml host/site lookup. Install shyaml or use Docker mode."
+	fi
 fi
 
 PR_SHA="$(cat "$GITHUB_EVENT_PATH" | jq -r .pull_request.head.sha)"
@@ -80,5 +91,8 @@ export SLACK_MESSAGE
 export SLACK_MESSAGE_ON_SUCCESS
 export SLACK_MESSAGE_ON_FAILURE
 export SLACK_MESSAGE_ON_CANCEL
+
+# In native mode, ensure the binary from ACTION_DIR is on PATH
+export PATH="${ACTION_DIR:+$ACTION_DIR:}$PATH"
 
 slack-notify "$@"

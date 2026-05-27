@@ -4,14 +4,60 @@ on:
       - "v*"
 name: Release Creation
 jobs:
+  build-binaries:
+    name: Build Go Binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Build binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          LDFLAGS="-w"
+          if [[ "$GOOS" == "linux" ]]; then
+            LDFLAGS="$LDFLAGS -extldflags \"-static\""
+          fi
+          go build -a -installsuffix cgo -ldflags "$LDFLAGS" \
+            -o "slack-notify-${GOOS}-${GOARCH}" main.go
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: slack-notify-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: slack-notify-${{ matrix.goos }}-${{ matrix.goarch }}
+
   release:
     name: Create a Draft Release on GitHub
+    needs: build-binaries
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
     - name: Get Release Name
       id: get_release_name
       run: |
-        echo "release_name=${GITHUB_REF_NAME/v/Version }" >> $GITHUB_ENV
+        echo "release_name=${GITHUB_REF_NAME/v/Version }" >> "$GITHUB_OUTPUT"
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
     - name: Publish a Draft Release
       uses: softprops/action-gh-release@v2
       with:
@@ -19,8 +65,9 @@ jobs:
           ## What's Changed
 
           **Changelog:**
-        draft: true  # Creates a Draft Release
+        draft: true
         name: ${{ steps.get_release_name.outputs.release_name }}
         generate_release_notes: true
         append_body: true
-
+        files: |
+          artifacts/slack-notify-*/slack-notify-*

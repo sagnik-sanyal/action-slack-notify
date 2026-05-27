@@ -1,9 +1,39 @@
 name: 'Slack Notify'
 description: 'This action will send a notification to Slack'
 author: 'rtCamp'
+inputs:
+  SLACK_NOTIFY_MODE:
+    description: 'Execution mode: "docker" (default), "native" (no Docker required), or "auto" (auto-detect Docker availability)'
+    required: false
+    default: 'docker'
 runs:
     using: 'composite'
     steps:
+      - name: "Detect execution mode"
+        id: detect_mode
+        shell: bash
+        env:
+          SLACK_NOTIFY_MODE_INPUT: "${{ inputs.SLACK_NOTIFY_MODE }}"
+        run: |
+          MODE=$(echo "$SLACK_NOTIFY_MODE_INPUT" | tr '[:upper:]' '[:lower:]')
+          case "$MODE" in
+            docker|native|auto) ;;
+            *)
+              echo "::error::Invalid SLACK_NOTIFY_MODE: '$SLACK_NOTIFY_MODE_INPUT'. Must be 'docker', 'native', or 'auto'."
+              exit 1
+              ;;
+          esac
+          if [[ "$MODE" == "auto" ]]; then
+            if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+              echo "::notice::Docker detected. Using Docker execution mode."
+              MODE="docker"
+            else
+              echo "::notice::Docker not available. Using native execution mode."
+              MODE="native"
+            fi
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+
       - name: "Slack-Markdown Message Conversion"
         if: env.SLACKIFY_MARKDOWN == 'true' && env.SLACK_MESSAGE != ''
         id: slackify_message
@@ -32,8 +62,15 @@ runs:
         with:
           text: '${{ env.SLACK_MESSAGE_ON_CANCEL }}'
 
-      - name: "Slack Notification (Formatted)"
-        if: env.SLACKIFY_MARKDOWN == 'true'
+      # --- Docker execution path (existing behavior) ---
+      # NOTE: We use `run: docker run` instead of `uses: docker://` because
+      # GitHub Actions pre-pulls Docker images for `uses: docker://` steps
+      # during job setup, BEFORE step-level `if:` conditions are evaluated.
+      # This causes failures on Docker-less runners like ubuntu-slim even
+      # when the step would be skipped. Using `run:` respects the `if:`.
+      - name: "Slack Notification (Formatted, Docker)"
+        if: steps.detect_mode.outputs.mode == 'docker' && env.SLACKIFY_MARKDOWN == 'true'
+        shell: bash
         env:
           SLACK_MESSAGE: "${{ steps.slackify_message.outputs.text || env.SLACK_MESSAGE }}"
           SLACK_MESSAGE_ON_SUCCESS: "${{ steps.slackify_success_message.outputs.text || env.SLACK_MESSAGE_ON_SUCCESS }}"
@@ -41,13 +78,133 @@ runs:
           SLACK_MESSAGE_ON_CANCEL: "${{ steps.slackify_cancel_message.outputs.text || env.SLACK_MESSAGE_ON_CANCEL }}"
           GITHUB_RUN: "${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}"
           ENABLE_ESCAPES: "true"
-        uses: "docker://ghcr.io/rtcamp/action-slack-notify@sha256:acc1c430721b27030d3dacf4273eec569388ad650e127bb9f1292f33cd9cd9bd" # v2.3.3
+        run: |
+          docker run --rm \
+            --workdir /github/workspace \
+            -v "$GITHUB_WORKSPACE":"/github/workspace" \
+            -v "$GITHUB_EVENT_PATH":"$GITHUB_EVENT_PATH" \
+            -e GITHUB_RUN -e ENABLE_ESCAPES \
+            -e SLACK_WEBHOOK -e SLACK_TOKEN -e SLACK_CHANNEL \
+            -e SLACK_MESSAGE -e SLACK_MESSAGE_ON_SUCCESS \
+            -e SLACK_MESSAGE_ON_FAILURE -e SLACK_MESSAGE_ON_CANCEL \
+            -e SLACK_USERNAME -e SLACK_ICON -e SLACK_ICON_EMOJI \
+            -e SLACK_COLOR -e SLACK_TITLE -e SLACK_FOOTER \
+            -e SLACK_LINK_NAMES -e SLACK_THREAD_TS -e SLACK_FILE_UPLOAD \
+            -e SLACK_CUSTOM_PAYLOAD -e SLACK_MSG_AUTHOR -e MSG_MINIMAL \
+            -e SLACKIFY_MARKDOWN -e GITHUB_SHA -e GITHUB_REF \
+            -e GITHUB_ACTOR -e GITHUB_WORKFLOW -e GITHUB_EVENT_NAME \
+            -e GITHUB_EVENT_PATH -e GITHUB_WORKSPACE -e GITHUB_REPOSITORY \
+            -e GITHUB_SERVER_URL -e GITHUB_RUN_NUMBER -e GITHUB_ACTION \
+            -e VAULT_ADDR -e VAULT_TOKEN -e VAULT_GITHUB_TOKEN \
+            "ghcr.io/rtcamp/action-slack-notify@sha256:acc1c430721b27030d3dacf4273eec569388ad650e127bb9f1292f33cd9cd9bd"
 
-      - name: "Slack Notification (Unformatted)"
-        if: env.SLACKIFY_MARKDOWN != 'true'
-        uses: "docker://ghcr.io/rtcamp/action-slack-notify@sha256:acc1c430721b27030d3dacf4273eec569388ad650e127bb9f1292f33cd9cd9bd" # v2.3.3
+      - name: "Slack Notification (Unformatted, Docker)"
+        if: steps.detect_mode.outputs.mode == 'docker' && env.SLACKIFY_MARKDOWN != 'true'
+        shell: bash
         env:
           GITHUB_RUN: "${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}"
+        run: |
+          docker run --rm \
+            --workdir /github/workspace \
+            -v "$GITHUB_WORKSPACE":"/github/workspace" \
+            -v "$GITHUB_EVENT_PATH":"$GITHUB_EVENT_PATH" \
+            -e GITHUB_RUN \
+            -e SLACK_WEBHOOK -e SLACK_TOKEN -e SLACK_CHANNEL \
+            -e SLACK_MESSAGE -e SLACK_MESSAGE_ON_SUCCESS \
+            -e SLACK_MESSAGE_ON_FAILURE -e SLACK_MESSAGE_ON_CANCEL \
+            -e SLACK_USERNAME -e SLACK_ICON -e SLACK_ICON_EMOJI \
+            -e SLACK_COLOR -e SLACK_TITLE -e SLACK_FOOTER \
+            -e SLACK_LINK_NAMES -e SLACK_THREAD_TS -e SLACK_FILE_UPLOAD \
+            -e SLACK_CUSTOM_PAYLOAD -e SLACK_MSG_AUTHOR -e MSG_MINIMAL \
+            -e SLACKIFY_MARKDOWN -e ENABLE_ESCAPES -e GITHUB_SHA -e GITHUB_REF \
+            -e GITHUB_ACTOR -e GITHUB_WORKFLOW -e GITHUB_EVENT_NAME \
+            -e GITHUB_EVENT_PATH -e GITHUB_WORKSPACE -e GITHUB_REPOSITORY \
+            -e GITHUB_SERVER_URL -e GITHUB_RUN_NUMBER -e GITHUB_ACTION \
+            -e VAULT_ADDR -e VAULT_TOKEN -e VAULT_GITHUB_TOKEN \
+            "ghcr.io/rtcamp/action-slack-notify@sha256:acc1c430721b27030d3dacf4273eec569388ad650e127bb9f1292f33cd9cd9bd"
+
+      # --- Native execution path (no Docker required) ---
+      - name: "Download slack-notify binary"
+        if: steps.detect_mode.outputs.mode == 'native'
+        shell: bash
+        env:
+          ACTION_REF: "${{ github.action_ref }}"
+          ACTION_REPO: "${{ github.action_repository }}"
+          ACTION_PATH: "${{ github.action_path }}"
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m)
+
+          case "$OS" in
+            linux)
+              case "$ARCH" in
+                x86_64) ARCH="amd64" ;;
+                aarch64) ARCH="arm64" ;;
+                *) echo "::error::Unsupported architecture on Linux: $ARCH"; exit 1 ;;
+              esac
+              ;;
+            darwin)
+              case "$ARCH" in
+                arm64) ;;
+                *) echo "::error::Unsupported architecture on macOS: $ARCH. Only arm64 is supported."; exit 1 ;;
+              esac
+              ;;
+            *)
+              echo "::error::Unsupported operating system: $OS"
+              exit 1
+              ;;
+          esac
+
+          ACTION_VERSION="$ACTION_REF"
+
+          # Validate that the ref looks like a version tag
+          if [[ ! "$ACTION_VERSION" =~ ^v[0-9] ]]; then
+            echo "::error::Native mode requires a version tag ref (e.g. @v2 or @v2.4.0), got '$ACTION_VERSION'. Branch or SHA refs are not supported for native mode."
+            exit 1
+          fi
+
+          # If major-version tag (e.g. "v2"), resolve to latest matching release
+          if [[ "$ACTION_VERSION" =~ ^v[0-9]+$ ]]; then
+            RESOLVED=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${ACTION_REPO}/releases?per_page=100" | \
+              jq -r --arg prefix "$ACTION_VERSION." '[.[] | select(.tag_name | startswith($prefix)) | select(.draft == false)] | sort_by(.created_at) | last | .tag_name')
+            if [[ -n "$RESOLVED" && "$RESOLVED" != "null" ]]; then
+              ACTION_VERSION="$RESOLVED"
+            else
+              echo "::error::Could not resolve release for ${ACTION_REF}. Ensure binaries are attached to a published release."
+              exit 1
+            fi
+          fi
+
+          DOWNLOAD_URL="https://github.com/${ACTION_REPO}/releases/download/${ACTION_VERSION}/slack-notify-${OS}-${ARCH}"
+          echo "Downloading slack-notify from ${DOWNLOAD_URL}"
+          curl -fsSL -o "${ACTION_PATH}/slack-notify" "${DOWNLOAD_URL}"
+          chmod +x "${ACTION_PATH}/slack-notify"
+
+      - name: "Slack Notification (Formatted, Native)"
+        if: steps.detect_mode.outputs.mode == 'native' && env.SLACKIFY_MARKDOWN == 'true'
+        shell: bash
+        env:
+          SLACK_MESSAGE: "${{ steps.slackify_message.outputs.text || env.SLACK_MESSAGE }}"
+          SLACK_MESSAGE_ON_SUCCESS: "${{ steps.slackify_success_message.outputs.text || env.SLACK_MESSAGE_ON_SUCCESS }}"
+          SLACK_MESSAGE_ON_FAILURE: "${{ steps.slackify_failure_message.outputs.text || env.SLACK_MESSAGE_ON_FAILURE }}"
+          SLACK_MESSAGE_ON_CANCEL: "${{ steps.slackify_cancel_message.outputs.text || env.SLACK_MESSAGE_ON_CANCEL }}"
+          GITHUB_RUN: "${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}"
+          ENABLE_ESCAPES: "true"
+          ACTION_DIR: "${{ github.action_path }}"
+        run: |
+          bash "${ACTION_DIR}/entrypoint.sh"
+
+      - name: "Slack Notification (Unformatted, Native)"
+        if: steps.detect_mode.outputs.mode == 'native' && env.SLACKIFY_MARKDOWN != 'true'
+        shell: bash
+        env:
+          GITHUB_RUN: "${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}"
+          ACTION_DIR: "${{ github.action_path }}"
+        run: |
+          bash "${ACTION_DIR}/entrypoint.sh"
+
 branding:
   icon: 'bell'
   color: 'yellow'
